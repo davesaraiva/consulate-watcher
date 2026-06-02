@@ -1,0 +1,51 @@
+name: consulate-watcher
+
+# NOTE: GitHub cron is UTC-only. Your window is 6 AM - 10 PM Eastern.
+# In summer (EDT = UTC-4):  6 AM ET = 10:00 UTC, 10 PM ET = 02:00 UTC next day.
+# The script ALSO enforces the Eastern window internally (it's the source of
+# truth), so this schedule just avoids spinning up runners overnight.
+on:
+  schedule:
+    - cron: "*/15 10-23 * * *"   # ~6:00 AM - 7:45 PM ET
+    - cron: "*/15 0,1 * * *"     # ~8:00 PM - 9:45 PM ET
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Send a test notification instead of checking"
+        type: boolean
+        default: false
+
+# Don't let slow runs pile up on top of each other
+concurrency:
+  group: consulate-watcher
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      # Remember which dates we've already alerted on, across runs, so a slot
+      # that stays open doesn't ping you every 15 minutes.
+      - name: Restore alert state
+        uses: actions/cache@v4
+        with:
+          path: .seen_slots.json
+          key: seen-slots-${{ github.run_id }}
+          restore-keys: seen-slots-
+
+      - name: Check for earlier appointments
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          # optional extra channels (add the matching secrets if you want them):
+          # PUSHOVER_TOKEN: ${{ secrets.PUSHOVER_TOKEN }}
+          # PUSHOVER_USER:  ${{ secrets.PUSHOVER_USER }}
+          # PUSHOVER_PRIORITY: "2"
+        run: python consulate_watcher.py ${{ github.event.inputs.test == 'true' && '--test' || '' }}
